@@ -1,4 +1,4 @@
-#/bin/sh
+#!/bin/sh
 
 # This script will scan the current Apache access log on a recurring basis looking for IP addresses 
 # that generate too many suspicious requests (4xx or 5xx), and ban them by adding a "Deny" entry to the
