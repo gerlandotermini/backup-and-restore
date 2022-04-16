@@ -5,16 +5,18 @@
 # .htaccess file governing the ASRC website
 
 # Define initial script params
-THRESHOLD404=30
-THRESHOLDKW=2
-PATH_TO_SELF="$( cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )"
+THRESHOLD_4XX_5XX=30
+THRESHOLD_KEYWORDS=5
+THRESHOLD_DOS=10000
+LOOKBACK_MINUTES=60
+PATH_TO_SELF="$(cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P)"
 
 # Load banned keywords
 IFS=$'\n' read -d '' -r -a KEYWORDS < "${PATH_TO_SELF}/keywords.txt"
 
 # Make sure all the parameters were specified
 if [[ -z "$1" || -z "$2" ]]; then
-    echo -e "Error: Please provide the path to the .htaccess file and the list of log folders to scan:\nip2ban.sh /var/www/html/.htaccess 'lw2a lw2b lw2c'"
+    echo -e "Error: Please provide the path to the .htaccess file and the list of log files to scan:\nip2ban.sh /var/www/html/.htaccess '/var/logs/site1/ssl_access.log /var/logs/site2/ssl_access.log /var/www/site3/ssl_access.log'"
     exit 1
 fi
 
@@ -84,19 +86,25 @@ function in_subnet {
 
 # Find which access log is being used
 BANLIST=""
-for server in ${LOGS[*]}; do
-  if [ -f "/var/log/httpd-$server/asrc/ssl_access.log" ]; then
+for server_log in ${LOGS[*]}; do
+  if [ -f $server_log ]; then
     # Get a list of IP addresses that have exceeded the threshold amount of 4xx or 5xx requests
-    NEWITEMS=$(awk '{if($9 ~ /^4/ || $9 ~ /^5/) {print $1 " " $9}}' "/var/log/httpd-$server/asrc/ssl_access.log" | sort | uniq -c | sort -nr | awk -v threshold="$THRESHOLD404" '{if ($1 > threshold) {print $2 "|" $3 " HTTP error recorded " $1 " times"}}')
+    NEWITEMS=$(awk -v datestring=$(date -d "now -${LOOKBACK_MINUTES} minutes" +[%d/%b/%Y:%H:%M:%S) '{if ($4 > datestring && ($9 ~ /^4/ || $9 ~ /^5/)) {print $1 " " $9}}' $server_log | sort | uniq -c | sort -nr | awk -v threshold="$THRESHOLD_4XX_5XX" -v lookback_minutes="$LOOKBACK_MINUTES" '{if ($1 > threshold) {print $2 "|" $3 " HTTP error recorded " $1 " times in the last " lookback_minutes " minutes"}}')
     if [ ! -z "${NEWITEMS}" ]; then
         BANLIST="${BANLIST}${NEWITEMS}"$'\n'
     fi
 
     # Look for IP addresses trying to access suspicious URL
-    NEWITEMS=$(awk -v keywords="${KEYWORDS[*]}" '{n=split(keywords, kw, " "); for (x in kw) {if ($7 ~ kw[x]) {print $1 " " kw[x] " " $7}}}' "/var/log/httpd-$server/asrc/ssl_access.log" | sort | uniq -c | sort -nr | awk -v threshold="$THRESHOLDKW" '{if ($1 > threshold) {print $2 "|String matched " $1 " times in: " $4}}')
+    NEWITEMS=$(awk -v datestring=$(date -d "now -${LOOKBACK_MINUTES} minutes" +[%d/%b/%Y:%H:%M:%S) -v already_found="$NEWITEMS" '{if (already_found !~ $1 && $4 > datestring) {print $0}}' $server_log | awk -v keywords="${KEYWORDS[*]}" '{split(keywords, kw, " "); for (x in kw) {if ($7 ~ kw[x]) {print $1 " " kw[x] " " $7}}}' | sort | uniq -c | sort -nr | awk -v threshold="$THRESHOLD_KEYWORDS" -v lookback_minutes="$LOOKBACK_MINUTES" '{if ($1 > threshold) {print $2 "|String " $4 " accessed " $1 " times in the last " lookback_minutes " minutes"}}')
     if [ ! -z "${NEWITEMS}" ]; then
         BANLIST="${BANLIST}${NEWITEMS}"$'\n'
     fi
+
+    # Is any IP address flooding the server with requests (DoS)?
+    NEWITEMS=$(awk -v datestring=$(date -d "now -${LOOKBACK_MINUTES} minutes" +[%d/%b/%Y:%H:%M:%S) -v already_found="$NEWITEMS" '{if (already_found !~ $1 && $4 > datestring) {print $1}}' $server_log | sort | uniq -c | sort -nr | awk -v threshold="$THRESHOLD_DOS" -v lookback_minutes="$LOOKBACK_MINUTES" '{if ($1 > threshold) {print $2 "|DoS Attempt with " $1 " requests in the last " lookback_minutes " minutes"}}')
+    if [ ! -z "${NEWITEMS}" ]; then
+        BANLIST="${BANLIST}${NEWITEMS}"$'\n'
+    fi 
   fi
 done
 
