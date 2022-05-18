@@ -86,6 +86,7 @@ function in_subnet {
 
 # Find which access log is being used
 BANLIST=""
+
 for server_log in ${LOGS[*]}; do
   if [ -f $server_log ]; then
     # Get a list of IP addresses that have exceeded the threshold amount of 4xx or 5xx requests
@@ -129,6 +130,16 @@ if [ ! -z "${BANLIST}" ]; then
       echo "# $(date +'%Y/%m/%d %H:%M:%S')$IPHOSTNAME - $comment" >> $HTACCESS
       echo "Deny from $ip" >> $HTACCESS
       echo "Added: $ip$IPHOSTNAME - $comment"
+
+      echo -e "\n\nActivity:\n"
+      for server_log in ${LOGS[*]}; do
+        if [ -f $server_log ]; then
+          MATCHES=$(grep -i $ip $server_log)
+          if [ ! -z "${MATCHES}" ]; then
+            echo "$MATCHES"
+          fi
+        fi
+     done
     else
       IPFOUND=0
     fi
