@@ -28,40 +28,43 @@ update_repo () {
 
   REPO_DIR="$(/usr/local/bin/wp $1 path)/$REPO_SLUG"
 
-  # Does this repo have an upstream branch?
-  REPO_UPSTREAM_BRANCH=$(git --git-dir=$REPO_DIR/.git --work-tree=$REPO_DIR rev-parse --verify --quiet upstream)
+  if [ -d "$REPO_DIR/.git" ]; then
 
-  if [ ! -z "$REPO_UPSTREAM_BRANCH" ]; then
-    printf "This plugin is using an 'upstream' branch. Would you like to use it to save the new version? [Y/n] "
-    read -r WP_CONFIRM_BRANCH
-    if [[ $WP_CONFIRM_BRANCH == 'n' || $WP_CONFIRM_UPDATE == 'N' ]]; then
-      exit 1
+    # Does this repo have an upstream branch?
+    REPO_UPSTREAM_BRANCH=$(git --git-dir=$REPO_DIR/.git --work-tree=$REPO_DIR rev-parse --verify --quiet upstream)
+
+    if [ ! -z "$REPO_UPSTREAM_BRANCH" ]; then
+      printf "This plugin is using an 'upstream' branch. Would you like to use it to save the new version? [Y/n] "
+      read -r WP_CONFIRM_BRANCH
+      if [[ $WP_CONFIRM_BRANCH == 'n' || $WP_CONFIRM_UPDATE == 'N' ]]; then
+        exit 1
+      fi
+
+      REPO_TARGET_BRANCH="upstream"
+    else
+      REPO_TARGET_BRANCH="master"
     fi
 
-    REPO_TARGET_BRANCH="upstream"
-  else
-    REPO_TARGET_BRANCH="master"
-  fi
-
-  if [ -d $REPO_DIR/.git ]; then
     REPO_CURRENT_BRANCH=$(git --git-dir=$REPO_DIR/.git --work-tree=$REPO_DIR symbolic-ref HEAD --short 2>/dev/null)
 	
     if [ "$REPO_CURRENT_BRANCH" != "$REPO_TARGET_BRANCH" ]; then
       git --git-dir=$REPO_DIR/.git --work-tree=$REPO_DIR checkout $REPO_TARGET_BRANCH
     fi
-  fi
+  
+    # Move git folder and .gitignore somewhere else
+    echo "Saving git folder"
+    if [ -d $REPO_DIR/.git ]; then
+      mv "$REPO_DIR/.git" "/tmp/.git-$REPO_SLUG"
+    fi
 
-  # Move git folder and .gitignore somewhere else
-  echo "Saving git folder"
-  if [ -d $REPO_DIR/.git ]; then
-    mv "$REPO_DIR/.git" "/tmp/.git-$REPO_SLUG"
-  fi
+    if [ -f $REPO_DIR/.gitignore ]; then
+      mv "$REPO_DIR/.gitignore" "/tmp/.gitignore-$REPO_SLUG"
+    fi
+  else
+    echo "No .git folder found for '$REPO_SLUG'. Updating $1 without tracking changes."
+  fi  
 
-  if [ -f $REPO_DIR/.gitignore ]; then
-    mv "$REPO_DIR/.gitignore" "/tmp/.gitignore-$REPO_SLUG"
-  fi
-
-  # Update the plugin
+  # Update the plugin/theme
   WP_CLI_UPDATE=$(wp $1 update --format=csv $REPO_SLUG)
   if [[ $WP_CLI_UPDATE = *Error* ]]; then
     echo "There was an error updating $REPO_SLUG to version $NEW_VERSION. Aborting."
@@ -77,15 +80,17 @@ update_repo () {
     fi
 
     exit 2
+  else
+    echo "${1^} $REPO_SLUG successfully updated."
   fi
 
   # Move git stuff back
-  echo "Restoring git folder and committing changes to '$REPO_TARGET_BRANCH' branch"
   if [ -f /tmp/.gitignore-$REPO_SLUG ]; then
     mv "/tmp/.gitignore-$REPO_SLUG" "$REPO_DIR/.gitignore"
   fi
 
   if [ -d /tmp/.git-$REPO_SLUG ]; then
+    echo "Restoring git folder and committing changes to '$REPO_TARGET_BRANCH' branch"
     mv "/tmp/.git-$REPO_SLUG" "$REPO_DIR/.git"
     git --git-dir=$REPO_DIR/.git --work-tree=$REPO_DIR add -u .
     git --git-dir=$REPO_DIR/.git --work-tree=$REPO_DIR add .
@@ -101,19 +106,19 @@ update_repo () {
     if [ "$REPO_CURRENT_BRANCH" != "$REPO_TARGET_BRANCH" ]; then
       git --git-dir=$REPO_DIR/.git --work-tree=$REPO_DIR checkout $REPO_CURRENT_BRANCH
     fi
-  fi
 
-  # Update the repository and commit the changes
-  if [[ $3 != "quiet" ]]; then
-    printf "Would you like to push the update to the remote git repo (branch '$REPO_TARGET_BRANCH')? [Y/n] "
-    read -r WP_CONFIRM_PUSH
-    if [[ $WP_CONFIRM_PUSH == 'n' || $WP_CONFIRM_PUSH == 'N' ]]; then
-      exit 1
+    # Update the repository and commit the changes
+    if [[ $3 != "quiet" ]]; then
+      printf "Would you like to push the update to the remote git repo (branch '$REPO_TARGET_BRANCH')? [Y/n] "
+      read -r WP_CONFIRM_PUSH
+      if [[ $WP_CONFIRM_PUSH == 'n' || $WP_CONFIRM_PUSH == 'N' ]]; then
+        exit 1
+      fi
     fi
-  fi
 
-  git --git-dir=$REPO_DIR/.git --work-tree=$REPO_DIR push origin $REPO_TARGET_BRANCH
-  git --git-dir=$REPO_DIR/.git --work-tree=$REPO_DIR push --tags
+    git --git-dir=$REPO_DIR/.git --work-tree=$REPO_DIR push origin $REPO_TARGET_BRANCH
+    git --git-dir=$REPO_DIR/.git --work-tree=$REPO_DIR push --tags
+  fi
 }
 
 if [[ $2 == "all" ]]; then
@@ -122,7 +127,6 @@ if [[ $2 == "all" ]]; then
     echo "The following repos have available updates:"
     echo "$SLUG_LIST"
     while IFS= read -r A_SLUG; do
-      echo "Checking $A_SLUG for updates"
       update_repo $1 $A_SLUG quiet
     done <<< "$SLUG_LIST"
   else
